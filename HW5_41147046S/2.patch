@@ -1,0 +1,253 @@
+diff --git a/kernel/console.c b/kernel/console.c
+index 05dc526..793f99b 100644
+--- a/kernel/console.c
++++ b/kernel/console.c
+@@ -51,10 +51,70 @@ struct {
+   uint w;  // Write index
+   uint e;  // Edit index
+ } cons;
++typedef struct _Temp{
++    char buf[INPUT_BUF_SIZE];
++    uint e;  // Edit index
++}Temp;
++typedef struct History{
++  char buf[128];
++}history;
++history h[5];
++Temp temp = {.e = 0};
++int size = 0;
++int head = 0;
++int rear = -1;
++int curIndex = 0;
++char queue[5][128];
++
++void queueIndexReset() {
++  curIndex = rear+6;
++}
++
++void push(char* instruction) {
++  if(size != 5) { // not full
++    strncpy(queue[size++],instruction, strlen(instruction));
++    rear ++;
++  } else { // full
++    rear = (rear + 1) % 5;
++    head = (head + 1) % 5;
++    strncpy(queue[rear],instruction, strlen(instruction));
++
++  }
++  queueIndexReset();
++  return;
++}
++
++char* getLast() {
++  if(size == 0) {
++    consputc('\a'); 
++    return "";
++  }
++  if(curIndex == head) {
++    consputc('\a');
++  } else {
++    curIndex = (curIndex + 4) % 5;
++  }
++  return queue[curIndex];
++}
++
++char* getNext() {
++  if(size == 0) {
++    consputc('\a');
++    return "";
++  }
++  if(curIndex == rear) {
++    consputc('\a');
++  } else {
++    curIndex = (curIndex + 1) % 5;
++  }
++  return queue[curIndex];
++}
+ 
+ //
+ // user write()s to the console go here.
+ //
++int history_index = 0;
++int current = -1;
+ int
+ consolewrite(int user_src, uint64 src, int n)
+ {
+@@ -121,6 +181,7 @@ consoleread(int user_dst, uint64 dst, int n)
+       break;
+     }
+   }
++  // cons.r = cons.w;
+   release(&cons.lock);
+ 
+   return target - n;
+@@ -132,6 +193,7 @@ consoleread(int user_dst, uint64 dst, int n)
+ // do erase/kill processing, append to cons.buf,
+ // wake up consoleread() if a whole line has arrived.
+ //
++int flag = 0;
+ void
+ consoleintr(int c)
+ {
+@@ -154,6 +216,34 @@ consoleintr(int c)
+       cons.e--;
+       consputc(BACKSPACE);
+     }
++    break;
++  case C('W'): // up-arrow
++    char *s = getLast();
++    flag = 1;
++    while(cons.e != cons.w){
++      cons.e--;
++      consputc(BACKSPACE);
++    }
++    printf("\r");
++
++    for(int i = 0; i < 128 && s[i] != '\n'; i++){
++      consputc(s[i]);
++      cons.buf[cons.e++ % INPUT_BUF_SIZE] = s[i];
++    }
++    break;
++  case C('S'): // down-arrow
++    char *str = getNext();
++    flag = 1;
++    while(cons.e != cons.w){
++      cons.e--;
++      consputc(BACKSPACE);
++    }
++    printf("\r");
++    for(int i = 0; i < 128 && str[i] != '\n'; i++){
++      consputc(str[i]);
++      cons.buf[cons.e++ % INPUT_BUF_SIZE] = str[i];
++    }
++
+     break;
+   default:
+     if(c != 0 && cons.e-cons.r < INPUT_BUF_SIZE){
+@@ -164,10 +254,13 @@ consoleintr(int c)
+ 
+       // store for consumption by consoleread().
+       cons.buf[cons.e++ % INPUT_BUF_SIZE] = c;
+-
++      
++      temp.buf[temp.e++] = c;
+       if(c == '\n' || c == C('D') || cons.e-cons.r == INPUT_BUF_SIZE){
+-        // wake up consoleread() if a whole line (or end-of-file)
+-        // has arrived.
++        if(!flag) push(temp.buf);
++        temp.e = 0;
++        queueIndexReset();
++        
+         cons.w = cons.e;
+         wakeup(&cons.r);
+       }
+diff --git a/kernel/exec.c b/kernel/exec.c
+index e18bbb6..8b682a9 100644
+--- a/kernel/exec.c
++++ b/kernel/exec.c
+@@ -30,7 +30,7 @@ exec(char *path, char **argv)
+   struct proghdr ph;
+   pagetable_t pagetable = 0, oldpagetable;
+   struct proc *p = myproc();
+-
++  p->start_time = ticks;
+   begin_op();
+ 
+   if((ip = namei(path)) == 0){
+diff --git a/kernel/proc.c b/kernel/proc.c
+index 959b778..f702e37 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -19,7 +19,7 @@ extern void forkret(void);
+ static void freeproc(struct proc *p);
+ 
+ extern char trampoline[]; // trampoline.S
+-
++// uint ticks;
+ // helps ensure that wakeups of wait()ing
+ // parents are not lost. helps obey the
+ // memory model when using p->parent.
+@@ -347,10 +347,10 @@ void
+ exit(int status)
+ {
+   struct proc *p = myproc();
++  p->end_time = ticks;
+ 
+   if(p == initproc)
+     panic("init exiting");
+-
+   // Close all open files.
+   for(int fd = 0; fd < NOFILE; fd++){
+     if(p->ofile[fd]){
+@@ -366,7 +366,10 @@ exit(int status)
+   p->cwd = 0;
+ 
+   acquire(&wait_lock);
+-
++  if (p->parent == initproc){
++    // p->end_time = ticks;
++    printf("%d Done\t\t%s %d\n", p->pid, p->name, p->end_time-p->start_time);
++  }
+   // Give any children to init.
+   reparent(p);
+ 
+@@ -377,9 +380,8 @@ exit(int status)
+ 
+   p->xstate = status;
+   p->state = ZOMBIE;
+-
+   release(&wait_lock);
+-
++  
+   // Jump into the scheduler, never to return.
+   sched();
+   panic("zombie exit");
+@@ -455,6 +457,7 @@ scheduler(void)
+     for(p = proc; p < &proc[NPROC]; p++) {
+       acquire(&p->lock);
+       if(p->state == RUNNABLE) {
++        // p->start_time = ticks;
+         // Switch to chosen process.  It is the process's job
+         // to release its lock and then reacquire it
+         // before jumping back to us.
+diff --git a/kernel/proc.h b/kernel/proc.h
+index d021857..1028268 100644
+--- a/kernel/proc.h
++++ b/kernel/proc.h
+@@ -84,7 +84,8 @@ enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+ // Per-process state
+ struct proc {
+   struct spinlock lock;
+-
++  uint64 start_time;
++  uint64 end_time;
+   // p->lock must be held when using these:
+   enum procstate state;        // Process state
+   void *chan;                  // If non-zero, sleeping on chan
+diff --git a/kernel/sysfile.c b/kernel/sysfile.c
+index 16b668c..6bbdf4f 100644
+--- a/kernel/sysfile.c
++++ b/kernel/sysfile.c
+@@ -460,7 +460,7 @@ sys_exec(void)
+     if(fetchstr(uarg, argv[i], PGSIZE) < 0)
+       goto bad;
+   }
+-
++  
+   int ret = exec(path, argv);
+ 
+   for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
+diff --git a/user/sh.c b/user/sh.c
+index 836ebcb..f5d33bf 100644
+--- a/user/sh.c
++++ b/user/sh.c
+@@ -71,8 +71,7 @@ runcmd(struct cmd *cmd)
+   switch(cmd->type){
+   default:
+     panic("runcmd");
+-
+-  case EXEC:
++  case EXEC: 
+     ecmd = (struct execcmd*)cmd;
+     if(ecmd->argv[0] == 0)
+       exit(1);

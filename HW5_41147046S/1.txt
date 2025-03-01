@@ -1,0 +1,9 @@
+some reasons about the close performance of the two-thread case and the nthread case:
+
+Because the two method both use multi-threads, and they have some same points. 
+Although useing multi-threads usually can increase the performance, there are still some problem we met, which cause the process slow down.
+1. The creation and manage loading may be large if there are lots of threads and sometimes outweight the benefits of parallel execution.
+2. When multiple threads are competing for system resources such as CPU time, memory bandwidth, or cache space and so on, contention would be arised, leading to performance degradation. In the one-thread case, there is no contention, allowing the thread to fully utilize available resources.(We should make sure the CPU can paralliize running but there isn't optimal solution nowadays.)
+3. Threads might interfere with each other's execution when they use the same data(maybe different parts), leading to delays and inefficients. 
+
+So...as the above mentioned reasons, I think why one thread may run much faster when n = 8 is maybe because multi-threads' fault emerge when n = 8 and outweight the benefits of parallel execution at that time. Maybe because our computer has at least 4 CPU but may less than 8 and that cause the problem 2. mentioned.

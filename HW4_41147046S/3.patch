@@ -1,0 +1,14 @@
+diff --git a/kernel/proc.c b/kernel/proc.c
+index 959b778..0435164 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -350,6 +350,9 @@ exit(int status)
+ 
+   if(p == initproc)
+     panic("init exiting");
++  if(p->parent == initproc){
++    printf("%d Done %s\n", p->pid, p->name);
++  }
+ 
+   // Close all open files.
+   for(int fd = 0; fd < NOFILE; fd++){
